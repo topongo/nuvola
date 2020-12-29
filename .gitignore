@@ -1,0 +1,4 @@
+.idea
+nuvola/__pycache__
+nuvola.egg-info
+dist
