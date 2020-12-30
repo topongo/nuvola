@@ -7,10 +7,10 @@ from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionT
 
 class Nuvola:
     def __init__(self, id_student, max_hw_int=15*4):
-        self.conn = self.Connection()
-        self.__update_homeworks()
         self.id_student = id_student
+        self.conn = self.Connection()
         self.max_homework_interval = max_hw_int
+        self.__update_homeworks()
 
     def get(self, area):
         url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, area)
