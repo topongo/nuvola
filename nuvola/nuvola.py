@@ -6,11 +6,10 @@ from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionT
 
 
 class Nuvola:
-    def __init__(self, id_student, max_hw_int=15*4):
+    def __init__(self, id_student):
         self.id_student = id_student
         self.conn = self.Connection()
-        self.max_homework_interval = max_hw_int
-        self.__update_homeworks()
+        self.homeworks = self.Homeworks(self)
 
     def get(self, area):
         url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, area)
@@ -27,50 +26,63 @@ class Nuvola:
     def get_irregularities(self):
         return [self.Irregularity(i, self) for i in self.get("assenze")]
 
-    def __update_homeworks(self):
-        date_s = datetime.date(year=2020, month=9, day=1) + datetime.timedelta(days=1)
-        date_e = date_s + datetime.timedelta(days=15)
-        empty_count = 0
-        o = []
-        while True:
-            # for each iteration we ask nuvola homeworks in a period of time of 15 days
-            c = self.get_custom("/api-studente/v1/alunno/{}/compito/elenco/{}/{}".format(
-                self.id_student, date_s.strftime("%d-%m-%Y"), date_e.strftime("%d-%m-%Y")))
-            if "dettaglio" in c:
-                print("Error getting homeworks:", c["dettaglio"])
-            if len(c["valori"]) == 0:
-                empty_count += 1
-            else:
-                o += c["valori"]
-                empty_count = 0
-            if empty_count >= self.max_homework_interval/15:
-                break
-
-            date_s = date_e + datetime.timedelta(days=1)
-            date_e += datetime.timedelta(days=15)
-        self.homeworks = self.Homeworks(o)
-
     class Homeworks:
-        def __init__(self, hs):
-            self.data = [Nuvola.Homework(h) for h in hs]
+        def __init__(self, parent, max_empty_days = 15*4):
+            self.parent = parent
+            self.data = []
+            self.mod_time = datetime.datetime.now()
+            self.max_empty_days = max_empty_days
+            self.refresh_time = datetime.timedelta(hours=6)
+            self.load()
 
-        def get_by_assignment_date(self, date):
+        def load(self):
+            date_s = datetime.date(year=2020, month=9, day=1) + datetime.timedelta(days=1)
+            date_e = date_s + datetime.timedelta(days=15)
+            empty_count = 0
+            while True:
+                # for each iteration we ask nuvola homeworks in a period of time of 15 days
+                c = self.parent.get_custom("/api-studente/v1/alunno/{}/compito/elenco/{}/{}".format(
+                    self.parent.id_student, date_s.strftime("%d-%m-%Y"), date_e.strftime("%d-%m-%Y")))
+                if "dettaglio" in c:
+                    print("Error getting homeworks:", c["dettaglio"])
+                if len(c["valori"]) == 0:
+                    empty_count += 1
+                else:
+                    self.data += [Nuvola.Homework(i) for i in c["valori"]]
+                    empty_count = 0
+                if empty_count >= self.max_empty_days / 15:
+                    break
+                date_s = date_e + datetime.timedelta(days=1)
+                date_e += datetime.timedelta(days=15)
+            self.mod_time = datetime.datetime.now()
+
+        def check_and_update(self, force=False):
+            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+                self.load()
+
+        def get_by_assignment_date(self, date, force_reload=False):
+            self.check_and_update(force_reload)
             if type(date) is not datetime.date:
                 raise TypeError(date)
             for i in self.data:
                 if i.date_assigned == date:
                     yield i
 
-        def get_by_expiration_date(self, date):
+        def get_by_expiration_date(self, date, force_reload=False):
+            self.check_and_update(force_reload)
             if type(date) is not datetime.date:
                 raise TypeError(date)
             for i in self.data:
                 if i.date_expired == date:
                     yield i
 
-        def get_all(self):
+        def get_all(self, force_reload=False):
+            self.check_and_update(force_reload)
             for i in self.data:
                 yield i
+
+        def set_refresh_time(self, time: datetime.timedelta):
+            self.refresh_time = time
 
     class Homework:
         def __init__(self, h):
@@ -118,7 +130,7 @@ class Nuvola:
             j_r = self.c.getresponse()
             j = json.load(j_r)
             if j == "Errore":
-                raise self.RequestErrorException(url)
+                raise self.RequestErrorException(j)
             if "code" in j and j["code"] == 401:
                 print("Token expired, getting a new one...")
                 self.refresh_tokens()
