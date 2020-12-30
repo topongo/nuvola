@@ -3,7 +3,7 @@ from requests import get
 from json.decoder import JSONDecodeError
 
 opt = seleniumwire.webdriver.ChromeOptions()
-opt.headless = False
+opt.headless = True
 
 
 class InvalidCredentialsException(Exception):
@@ -31,6 +31,7 @@ def scrape_from_credentials(user, pwd):
     if "https://nuvola.madisoft.it/area-studente" not in [i.url for i in d.requests]:
         raise InvalidCredentialsException
     session_token = d.get_cookie("nuvola")["value"]
+    d.close()
 
     try:
         return session_token, get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
