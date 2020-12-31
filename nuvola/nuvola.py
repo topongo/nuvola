@@ -220,17 +220,37 @@ class Nuvola:
             for i in self.data:
                 yield i
 
-        def get_by_expiration_date(self):
-            # TODO
-            pass
+        def get_by_date(self, date):
+            if type(date) is not date:
+                raise TypeError(date)
+            self.check_and_update()
+            for i in self.data:
+                if i.date_end >= date >= i.date_start:
+                    yield i
 
-        def get_by_teacher(self):
-            # TODO
-            pass
+        def get_by_teacher(self, teacher):
+            self.check_and_update()
+            for i in self.data:
+                if i.teacher == teacher:
+                    yield i
 
         def get_unseen(self):
-            # TODO
-            pass
+            self.check_and_update()
+            for i in self.data:
+                if not i.seen:
+                    yield i
+
+        def get_by_type(self, type_):
+            self.check_and_update()
+            for i in self.data:
+                if not i.type == type_:
+                    yield i
+
+        def get_by_id(self, id_):
+            self.check_and_update()
+            for i in self.data:
+                if not i.id_ == id_:
+                    return i
 
     class Event:
         ATTACHMENT_LINK = "/api-studente/v1/alunno/{}/aventi-classe/allegato/{}"
@@ -318,6 +338,38 @@ class Nuvola:
                 self.parent.check_and_update()
                 for i in self.marks:
                     yield i
+
+            def get_by_teacher(self, teacher):
+                self.parent.check_and_update()
+                for i in self.marks:
+                    if i.teacher == teacher:
+                        yield i
+
+            def get_by_date(self, date):
+                if type(date) is not datetime.date:
+                    raise TypeError(date)
+                self.parent.check_and_update()
+                for i in self.marks:
+                    if i.date == date:
+                        yield i
+
+            def get_by_weight(self, min_, max_=1):
+                self.parent.check_and_update()
+                for i in self.marks:
+                    if min_ <= i.weight <= max_:
+                        yield i
+
+            def get_by_relevance(self):
+                self.parent.check_and_update()
+                for i in self.marks:
+                    if i.relevant:
+                        yield i
+
+            def get_by_type(self, type_):
+                self.parent.check_and_update()
+                for i in self.marks:
+                    if i.type_ == type_:
+                        yield i
 
             class Mark:
                 def __init__(self, m):

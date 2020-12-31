@@ -5,7 +5,7 @@ with open("README.md") as f:
 
 setuptools.setup(
       name='nuvola',
-      version='0.3',
+      version='0.4',
       description="Python API for the electronic register Nuvola from Madisoft",
       url='https://github.com/topongo/nuvola',
       author='Lorenzo Bodini',
