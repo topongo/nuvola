@@ -3,6 +3,7 @@ import json
 from getpass import getpass
 from http.client import HTTPSConnection
 from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionTokenException
+from .version import VERSION
 
 
 def check_for_json(obj, with_dates=False):
@@ -13,21 +14,47 @@ def check_for_json(obj, with_dates=False):
 
 
 class Nuvola:
-    def __init__(self, id_student):
+    def __init__(self, id_student, **kwargs):
         self.id_student = id_student
         t1 = datetime.datetime.now()
         self.conn = self.Connection()
-        print("Initializing connection took ", (datetime.datetime.now() - t1).total_seconds())
+        print("[ OK ] Connection ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+            self.__init_from_dict(kwargs["old_data"])
+            return
         t1 = datetime.datetime.now()
         self.homeworks = self.Homeworks(self)
-        print("Initializing homeworks took ", (datetime.datetime.now() - t1).total_seconds())
+        print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
         self.events = self.Events(self)
-        print("Initializing events took ", (datetime.datetime.now() - t1).total_seconds())
+        print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
         self.time_windows = self.__load_time_windows()
-        print("Initializing time windows took ", (datetime.datetime.now() - t1).total_seconds())
+        print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         self.active_time_window = self.__select_best_time_window()
+
+    def __init_from_dict(self, obj):
+        class FormatErrorException(Exception):
+            pass
+
+        class VersionMismatchException(Exception):
+            pass
+
+        if not all([i in ("homeworks", "events", "timeWindows", "version") for i in obj.keys()]):
+            raise FormatErrorException(obj)
+        if obj["version"] == VERSION or input("Data from import obj is from another version, continue? (y,N) ") == "y":
+            t1 = datetime.datetime.now()
+            self.homeworks = self.Homeworks(self, old_data=obj["homeworks"])
+            print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            t1 = datetime.datetime.now()
+            self.events = self.Events(self, old_data=obj["events"])
+            print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            t1 = datetime.datetime.now()
+            self.time_windows = self.__load_time_windows(obj["timeWindows"])
+            print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            self.active_time_window = self.__select_best_time_window()
+        else:
+            raise VersionMismatchException(f"{VERSION} != {obj['version']}")
 
     def get(self, area):
         url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, area)
@@ -38,8 +65,10 @@ class Nuvola:
         d = self.conn.get_data(custom_url)
         return d
 
-    def __load_time_windows(self):
-        return [self.TimeWindow(i, self) for i in self.get("frazioni-temporali")]
+    def __load_time_windows(self, old_data=None):
+        if old_data is not None:
+            return [self.TimeWindow(self, i["raw"], old_data=i) for i in old_data]
+        return [self.TimeWindow(self, i) for i in self.get("frazioni-temporali")]
 
     def __load_irregularities(self):
         return [self.Irregularity(i, self) for i in self.get("assenze")]
@@ -52,7 +81,7 @@ class Nuvola:
         class RequestErrorException(Exception):
             pass
 
-        def __init__(self):
+        def __init__(self, **kwargs):
             self.c = HTTPSConnection("nuvola.madisoft.it")
             try:
                 with open("u.tok", "r") as f:
@@ -119,13 +148,21 @@ class Nuvola:
             raise self.IncompatibleTimeWindowException(tw)
 
     class Homeworks:
-        def __init__(self, parent, max_empty_days=15*4):
+        def __init__(self, parent, max_empty_days=15*4, **kwargs):
             self.parent = parent
-            self.data = []
-            self.mod_time = datetime.datetime.now()
             self.max_empty_days = max_empty_days
             self.refresh_time = datetime.timedelta(hours=6)
+            self.data = []
+            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+                self.__init_from_dict(kwargs["old_data"])
+                return
+            self.mod_time = datetime.datetime.now()
             self.load()
+
+        def __init_from_dict(self, obj):
+            for i in obj["data"]:
+                self.data.append(Nuvola.Homework(i))
+            self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
 
         def load(self):
             date_s = datetime.date(year=2020, month=8, day=30) + datetime.timedelta(days=1)
@@ -192,12 +229,20 @@ class Nuvola:
             self.raw = h
 
     class Events:
-        def __init__(self, parent):
+        def __init__(self, parent, **kwargs):
             self.parent = parent
-            self.data = []
-            self.mod_time = datetime.datetime.now()
             self.refresh_time = datetime.timedelta(hours=6)
+            self.data = []
+            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+                self.__init_from_dict(kwargs["old_data"])
+                return
+            self.mod_time = datetime.datetime.now()
             self.load()
+
+        def __init_from_dict(self, obj):
+            for i in obj["data"]:
+                self.data.append(Nuvola.Event(i))
+            self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
 
         def load(self):
             e = self.parent.get("eventi-classe")
@@ -276,18 +321,25 @@ class Nuvola:
             self.raw = e
 
     class TimeWindow:
-        def __init__(self, w, parent):
+        def __init__(self, parent, w, **kwargs):
             self.parent = parent
             self.id_ = w["id"]
             self.name = w["nome"]
             self.current = w["corrente"]
-            self.subjects = []
-            self.mod_time = datetime.datetime.now()
+            self.raw = w
             self.refresh_time = datetime.timedelta(hours=6)
+            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+                self.__init_from_dict(kwargs["old_data"])
+                return
+            self.mod_time = datetime.datetime.now()
+            self.subjects = []
             self.load()
 
+        def __init_from_dict(self, obj):
+            self.subjects = [self.Subject(self, i["raw"], old_data=i["marks"]) for i in obj["subjects"]]
+            self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
+
         def load(self):
-            self.subjects = []
             s = self.parent.get("frazione-temporale/{}/voti/materie".format(self.id_))
             for i in s:
                 self.subjects.append(self.Subject(self, i))
@@ -320,13 +372,20 @@ class Nuvola:
                     return id_
 
         class Subject:
-            def __init__(self, parent, s):
+            def __init__(self, parent, s, **kwargs):
                 self.parent = parent
                 self.id_ = s["id"]
                 self.name = s["materia"]
                 self.type = s["tipo"]
+                self.raw = s
+                if "old_data" in kwargs and type(kwargs["old_data"]) is list:
+                    self.__init_from_dict(kwargs["old_data"])
+                    return
                 self.marks = []
                 self.load()
+
+            def __init_from_dict(self, obj):
+                self.marks = [self.Mark(i) for i in obj]
 
             def load(self):
                 m = self.parent.parent.get(
@@ -383,6 +442,7 @@ class Nuvola:
                     self.description = m["descrizione"]
                     self.name_objective = m["nomeObiettivo"]
                     self.objectives = m["obiettivi"]
+                    self.raw = m
 
     class Irregularity:
         ABSENCE = 0
@@ -418,88 +478,60 @@ class Nuvola:
             return self.parent.get_custom("/api-studente/v1/assenza/" + str(self.id))["dettaglio"]
 
     class File:
-        def __init__(self, f, parent):
+        def __init__(self, f, parent, **kwargs):
+            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+                self.__init_from_dict(kwargs["old_data"])
+                return
             self.parent = parent
             self.id_ = f["id"]
             self.name = f["nome"]
             self.mime_type = f["mimeType"]
 
-    def dump_to_dict(self):
-        output = {"last_mod": datetime.datetime.now().strftime("%s"),
-                  "homeworks": [],
-                  "events": [],
-                  "timeWindows": []
-                  }
+        def __init_from_dict(self, obj):
+            for i in obj:
+                self.__setattr__(i, obj[i])
+
+    def dump_to_dict(self, update_first=False):
+        self.homeworks.check_and_update(update_first)
+        self.events.check_and_update(update_first)
+        for i in self.get_time_windows():
+            i.check_and_update(update_first)
+
+        output = {
+            "homeworks": {
+                "mod_time": self.homeworks.mod_time.timestamp(),
+                "data": []
+            },
+            "events": {
+                "mod_time": self.events.mod_time.timestamp(),
+                "data": []
+            },
+            "timeWindows": [],
+            "version": VERSION
+        }
+
         # homeworks
-        self.homeworks.check_and_update(True)
         for h in self.homeworks.get_all():
-            t_obj = {"attachments": []}
-            for i in [j for j in dir(h) if not j.startswith("__") and j not in ("raw", "attachments")]:
-                t = h.__getattribute__(i)
-                if not check_for_json(t, True):
-                    continue
-                if type(t) is datetime.date:
-                    t = t.strftime("%s")
-                t_obj[i] = t
-            for i in h.attachments:
-                t_obj["attachments"].append({
-                    "id": i.id_,
-                    "name": i.name,
-                    "mime_type": i.mime_type
-                })
-            output["homeworks"].append(t_obj)
+            output["homeworks"]["data"].append(h.raw)
+
         # events
-        output["events"] = []
-        self.events.check_and_update(True)
         for e in self.events.get_all():
-            t_obj = {"attachments": []}
-            for i in [j for j in dir(e) if not j.startswith("__") and j not in ("raw", "attachments")]:
-                t = e.__getattribute__(i)
-                if not check_for_json(t, True):
-                    continue
-                if type(t) is datetime.datetime:
-                    t = t.strftime("%s")
-                t_obj[i] = t
-            for i in e.attachments:
-                t_obj["attachments"].append({
-                    "id": i.id_,
-                    "name": i.name,
-                    "mime_type": i.mime_type
-                })
-            output["events"].append(t_obj)
+            output["events"]["data"].append(e.raw)
+
         # timeWindow
-        output["timeWindows"] = []
         for tw in self.time_windows:
-            tw.check_and_update()
-            t_tw = {}
-            for i in [j for j in dir(tw) if not j.startswith("__") and j not in (
-                    "parent", "subjects", "mod_time", "refresh_time")]:
-                t = tw.__getattribute__(i)
-                if not check_for_json(t):
-                    continue
-                t_tw[i] = t
-            t_ss = []
-            for s in tw.subjects:
-                t_s = {}
-                for i in [j for j in dir(s) if not j.startswith("__") and j not in (
-                        "marks", "parent", "mod_time", "refresh_time")]:
-                    t = s.__getattribute__(i)
-                    if not check_for_json(t):
-                        continue
-                    t_s[i] = t
-                t_ms = []
+            t_tw = {
+                "mod_time": tw.mod_time.timestamp(),
+                "raw": tw.raw,
+                "subjects": []
+            }
+            for s in tw.get_all_subjects():
+                t_s = {
+                    "raw": s.raw,
+                    "marks": []
+                }
                 for m in s.marks:
-                    t_m = {}
-                    for i in [j for j in dir(m) if not j.startswith("__") and j not in ("raw", "date")]:
-                        t = m.__getattribute__(i)
-                        if not check_for_json(t, True):
-                            continue
-                        if type(t) is datetime.date:
-                            t = t.strftime("%s")
-                        t_m[i] = t
-                    t_ms.append(t_m)
-                t_s["marks"] = t_ms
-                t_ss.append(t_s)
-            t_tw["subjects"] = t_ss
+                    t_s["marks"].append(m.raw)
+                t_tw["subjects"].append(t_s)
             output["timeWindows"].append(t_tw)
         return output
