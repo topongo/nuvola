@@ -1,6 +1,6 @@
 import setuptools
 
-VERSION="0.5"
+VERSION="0.6"
 
 with open("README.md") as f:
     LONGDESCRIPTION = f.read()
@@ -15,7 +15,7 @@ setuptools.setup(
     author='Lorenzo Bodini',
     author_email='lorenzo.bodini.private@gmail.com',
     packages=['nuvola'],
-    python_requires='>=3.8',
+    python_requires='>=3.7',
     license="GPL3",
     platform="All",
     long_description=LONGDESCRIPTION,

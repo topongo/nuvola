@@ -15,9 +15,20 @@ def check_for_json(obj, with_dates=False):
 
 class Nuvola:
     def __init__(self, id_student, **kwargs):
+        """
+        :param id_student:
+        :type id_student: int
+        :param old_data:
+        :type old_data: dict
+        :param credentials:
+        :type credentials: dict
+        """
         self.id_student = id_student
         t1 = datetime.datetime.now()
-        self.conn = self.Connection()
+        if "credentials" in kwargs and type(kwargs["credentials"]) is dict:
+            self.conn = self.Connection(kwargs["credentials"])
+        else:
+            self.conn = self.Connection()
         print("[ OK ] Connection ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
             self.__init_from_dict(kwargs["old_data"])
@@ -81,8 +92,12 @@ class Nuvola:
         class RequestErrorException(Exception):
             pass
 
-        def __init__(self, **kwargs):
+        def __init__(self, credentials=None, **kwargs):
             self.c = HTTPSConnection("nuvola.madisoft.it")
+            if credentials is not None:
+                self.credentials = credentials
+            else:
+                self.credentials = None
             try:
                 with open("u.tok", "r") as f:
                     self.u_token = f.read()
@@ -99,8 +114,11 @@ class Nuvola:
             try:
                 self.u_token = scrape_from_token(self.s_token)
             except ExpiredSessionTokenException:
-                print("Expired session token, please use credentials")
-                self.s_token, self.u_token = scrape_from_credentials(input("Username: "), getpass("Password: "))
+                if self.credentials is not None:
+                    self.s_token, self.u_token = scrape_from_credentials(self.credentials["username"], self.credentials["password"])
+                else:
+                    print("Expired session token, please use credentials")
+                    self.s_token, self.u_token = scrape_from_credentials(input("Username: "), getpass("Password: "))
             with open("s.tok", "w") as f:
                 f.write(self.s_token)
             with open("u.tok", "w") as f:
@@ -188,20 +206,20 @@ class Nuvola:
             if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
                 self.load()
 
-        def get_by_assignment_date(self, date):
+        def get_by_assignment_date(self, date, days=0):
             self.check_and_update()
             if type(date) is not datetime.date:
                 raise TypeError(date)
             for i in self.data:
-                if i.date_assigned == date:
+                if date + datetime.timedelta(days=days) >= i.date_assigned >= date and i.date_assigned:
                     yield i
 
-        def get_by_expiration_date(self, date):
+        def get_by_expiration_date(self, date, days=0):
             self.check_and_update()
             if type(date) is not datetime.date:
                 raise TypeError(date)
             for i in self.data:
-                if i.date_expired == date:
+                if date + datetime.timedelta(days=days) >= i.date_expired >= date and i.date_expired:
                     yield i
 
         def get_all(self):
