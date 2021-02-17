@@ -1,5 +1,5 @@
 import seleniumwire.webdriver
-from requests import get
+import requests
 from json.decoder import JSONDecodeError
 
 opt = seleniumwire.webdriver.ChromeOptions()
@@ -14,9 +14,13 @@ class ExpiredSessionTokenException(Exception):
     pass
 
 
+class GenericErrorException(Exception):
+    pass
+
+
 def scrape_from_token(session_token):
     try:
-        return get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
+        return requests.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
                    cookies={"nuvola": str(session_token)}).json()["token"]
     except JSONDecodeError:
         raise ExpiredSessionTokenException
@@ -34,7 +38,8 @@ def scrape_from_credentials(user, pwd):
     d.close()
 
     try:
-        return session_token, get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
-                                  cookies={"nuvola": str(session_token)}).json()["token"]
+        r = requests.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
+                         cookies={"nuvola": str(session_token)})
+        return session_token, r.json()["token"], r.json()[""]
     except JSONDecodeError:
-        raise InvalidCredentialsException
+        raise InvalidCredentialsException(r.text)
