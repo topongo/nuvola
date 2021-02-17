@@ -20,4 +20,9 @@ setuptools.setup(
     platform="All",
     long_description=LONGDESCRIPTION,
     long_description_content_type="text/markdown",
+    install_requires=[
+        "selenium-wire",
+        "requests",
+        "datetime",
+    ]
 )
