@@ -1,16 +1,10 @@
 import datetime
 import json
+from copy import deepcopy
 from getpass import getpass
 from http.client import HTTPSConnection
 from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionTokenException
 from .version import VERSION
-
-
-def check_for_json(obj, with_dates=False):
-    if type(obj) in (int, float, dict, list, str, bool) or obj is None:
-        return True
-    else:
-        return with_dates and obj in (datetime.date, datetime.datetime, datetime.time)
 
 
 class Nuvola:
@@ -40,6 +34,9 @@ class Nuvola:
         self.events = self.Events(self)
         print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
+        self.topics = self.Topics(self)
+        print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        t1 = datetime.datetime.now()
         self.time_windows = self.__load_time_windows()
         print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         self.active_time_window = self.__select_best_time_window()
@@ -51,7 +48,7 @@ class Nuvola:
         class VersionMismatchException(Exception):
             pass
 
-        if not all([i in ("homeworks", "events", "timeWindows", "version") for i in obj.keys()]):
+        if not all([i in ("homeworks", "events", "timeWindows", "version", "topics") for i in obj.keys()]):
             raise FormatErrorException(obj)
         if obj["version"] == VERSION or input("Data from import obj is from another version, continue? (y,N) ") == "y":
             t1 = datetime.datetime.now()
@@ -60,6 +57,9 @@ class Nuvola:
             t1 = datetime.datetime.now()
             self.events = self.Events(self, old_data=obj["events"])
             print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            t1 = datetime.datetime.now()
+            self.topics = self.Topics(self, old_data=obj["topics"])
+            print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
             t1 = datetime.datetime.now()
             self.time_windows = self.__load_time_windows(obj["timeWindows"])
             print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
@@ -92,7 +92,7 @@ class Nuvola:
         class RequestErrorException(Exception):
             pass
 
-        def __init__(self, credentials=None, **kwargs):
+        def __init__(self, credentials=None):
             self.c = HTTPSConnection("nuvola.madisoft.it")
             if credentials is not None:
                 self.credentials = credentials
@@ -115,10 +115,12 @@ class Nuvola:
                 self.u_token = scrape_from_token(self.s_token)
             except ExpiredSessionTokenException:
                 if self.credentials is not None:
-                    self.s_token, self.u_token = scrape_from_credentials(self.credentials["username"], self.credentials["password"])
+                    self.s_token, self.u_token = scrape_from_credentials(
+                        self.credentials["username"], self.credentials["password"])
                 else:
                     print("Expired session token, please use credentials")
-                    self.s_token, self.u_token = scrape_from_credentials(input("Username: "), getpass("Password: "))
+                    self.s_token, self.u_token = scrape_from_credentials(
+                        input("Username: "), getpass("Password: "))
             with open("s.tok", "w") as f:
                 f.write(self.s_token)
             with open("u.tok", "w") as f:
@@ -312,7 +314,7 @@ class Nuvola:
         def get_by_id(self, id_):
             self.check_and_update()
             for i in self.data:
-                if not i.id_ == id_:
+                if i.id_ == id_:
                     return i
 
     class Event:
@@ -495,6 +497,124 @@ class Nuvola:
         def __get_details(self):
             return self.parent.get_custom("/api-studente/v1/assenza/" + str(self.id))["dettaglio"]
 
+    class Topics:
+        def __init__(self, parent, max_empty_days=15 * 4, **kwargs):
+            self.parent = parent
+            self.max_empty_days = max_empty_days
+            self.refresh_time = datetime.timedelta(hours=6)
+            self.data = []
+            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
+                self.__init_from_dict(kwargs["old_data"])
+                return
+            self.mod_time = datetime.datetime.now()
+            self.load()
+
+        def __init_from_dict(self, obj):
+            for i in obj["data"]:
+                self.data.append(Nuvola.Topic(i["lesson"], i["lesson"]["argomenti"], i["class"], i["class_id"]))
+            self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
+
+        def load(self):
+            date_s = datetime.date(year=2020, month=8, day=30) + datetime.timedelta(days=1)
+            date_e = date_s + datetime.timedelta(days=15)
+            empty_count = 0
+            self.data = []
+            while True:
+                # for each iteration we ask nuvola homeworks in a period of time of 15 days
+                c = self.parent.get("argomento-lezione/elenco/{}/{}".format(
+                    date_s.strftime("%d-%m-%Y"), date_e.strftime("%d-%m-%Y")))
+                emp = True
+                for i in c:
+                    for j in i["ore"]:
+                        if j["argomenti"]:
+                            emp = False
+                            if len(j["argomenti"]) == 1:
+                                self.data.append(Nuvola.Topic(j, j["argomenti"][0], i["classe"], i["classeId"]))
+                            else:
+                                for k in range(len(j["argomenti"])):
+                                    self.data.append(Nuvola.Topic(j, j["argomenti"][k], i["classe"], i["classeId"]))
+                if emp:
+                    empty_count += 1
+                if empty_count >= self.max_empty_days / 15:
+                    break
+                date_s = date_e + datetime.timedelta(days=1)
+                date_e += datetime.timedelta(days=15)
+            self.mod_time = datetime.datetime.now()
+
+        def check_and_update(self, force=False):
+            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+                self.load()
+
+        def set_refresh_time(self, time):
+            if type(time) is not datetime.timedelta:
+                raise TypeError(time)
+            self.refresh_time = time
+
+        def get_all(self):
+            self.check_and_update()
+            for i in self.data:
+                yield i
+
+        def get_by_date(self, date):
+            if type(date) is not date:
+                raise TypeError(date)
+            self.check_and_update()
+            for i in self.data:
+                if i.date == date:
+                    yield i
+
+        def get_by_teacher(self, teacher):
+            self.check_and_update()
+            for i in self.data:
+                if i.teacher == teacher:
+                    yield i
+
+        def get_by_subject(self, subject, search=False):
+            self.check_and_update()
+            for i in self.data:
+                if i.subject == subject or search and subject in i.subject:
+                    yield i
+
+        def get_by_type(self, type_):
+            self.check_and_update()
+            for i in self.data:
+                if not i.type == type_:
+                    yield i
+
+        def get_by_id(self, id_):
+            self.check_and_update()
+            for i in self.data:
+                if i.id_ == id_:
+                    return i
+
+    class Topic:
+        def __init__(self, t, a, class_, class_id):
+            self.class_ = class_
+            self.class_id = class_id
+
+            self.lesson = t["numeroOra"]
+            self.time_start = datetime.datetime.fromisoformat(
+                t["giorno"].replace("00:00:00", t["inizioOra"] + ":00")).time()
+            self.time_end = datetime.datetime.fromisoformat(
+                t["giorno"].replace("00:00:00", t["fineOra"] + ":00")).time()
+            self.date = datetime.datetime.fromisoformat(t["giorno"]).date()
+
+            if a["cofirme"] or a["compresenza"]:
+                raise
+            self.id_ = a["id"]
+            self.type = a["tipo"]
+            self.subject = a["materia"]
+            self.name = a["nomeArgomento"]
+            self.long_description = a["descrizioneEstesa"]
+            self.co_presence = a["compresenza"]
+            self.teacher = a["docente"]
+            self.notes = a["annotazioni"]
+            self.attachments = [Nuvola.File(i, self.__class__) for i in a["allegati"]]
+            self.youtube_link = a["video_youtube"]
+            t_r = deepcopy(t)
+            t_r["argomenti"] = deepcopy(a)
+            self.raw = t_r
+
     class File:
         def __init__(self, f, parent, **kwargs):
             if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
@@ -509,11 +629,12 @@ class Nuvola:
             for i in obj:
                 self.__setattr__(i, obj[i])
 
-    def dump_to_dict(self, update_first=False):
+    def dump_to_dict(self, update_first=True):
         self.homeworks.check_and_update(update_first)
         self.events.check_and_update(update_first)
         for i in self.get_time_windows():
             i.check_and_update(update_first)
+        self.topics.check_and_update(update_first)
 
         output = {
             "homeworks": {
@@ -522,6 +643,10 @@ class Nuvola:
             },
             "events": {
                 "mod_time": self.events.mod_time.timestamp(),
+                "data": []
+            },
+            "topics": {
+                "mod_time": self.topics.mod_time.timestamp(),
                 "data": []
             },
             "timeWindows": [],
@@ -552,4 +677,12 @@ class Nuvola:
                     t_s["marks"].append(m.raw)
                 t_tw["subjects"].append(t_s)
             output["timeWindows"].append(t_tw)
+
+        # topics
+        for t in self.topics.get_all():
+            output["topics"]["data"].append({
+                "lesson": t.raw,
+                "class": t.class_,
+                "class_id": t.class_id
+            })
         return output
