@@ -7,41 +7,113 @@ from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionT
 from .version import VERSION
 
 
+class NuvolaOptions:
+    DATA_TYPES = {
+        "credentials": dict,
+        "verbose": bool,
+        "old_data": dict,
+        "connection": None,
+        "refresh_interval": datetime.timedelta,
+        "start_date": datetime.date,
+        "homeworks": {
+            "max_empty_days": int,
+            "backwards_refresh_date": datetime.timedelta
+        },
+        "timeWindows": {
+            "backwards_refresh_date": datetime.timedelta
+        },
+        "events": {
+            "backwards_refresh_date": datetime.timedelta
+        },
+        "topics": {
+            "max_empty_days": int,
+            "backwards_refresh_date": datetime.timedelta
+        }
+    }
+
+    def __init__(self, data=None):
+        if data:
+            self.data = data
+        else:
+            self.data = {
+                "credentials": None,
+                "old_data": {},
+                "verbose": False,
+                "refresh_interval": datetime.timedelta(hours=6),
+                "start_date": datetime.date(year=2020, month=8, day=30),
+                "homeworks": {
+                    "max_empty_days": 15 * 4,
+                    "backwards_refresh_date": datetime.timedelta(hours=15)
+                },
+                "topics": {
+                    "max_empty_days": 15 * 4,
+                    "backwards_refresh_date": datetime.timedelta(days=7)
+                }
+            }
+
+    def set(self, key, value):
+        if type(value) is self.DATA_TYPES[key] or type(value) is self.DATA_TYPES[key]:
+            self.data[key] = value
+        else:
+            raise TypeError(f"Invalid type: \"{self.DATA_TYPES[key]}\" required, \"{type(value)}\" provided")
+
+    def get(self, key):
+        try:
+            return self.data[key]
+        except KeyError:
+            raise self.KeyNotFoundException(f"The provided key (\"{key}\") can't be found.")
+
+    def keys(self):
+        return self.data.keys()
+
+    class KeyNotFoundException(Exception):
+        pass
+
+
 class Nuvola:
-    def __init__(self, id_student, **kwargs):
+    def __init__(self, id_student, options=NuvolaOptions(), old_data=None):
         """
-        :param id_student:
+        :param id_student: Student id, for now it can only be retrieved with a browser, sadly.
+        :param options: User defined options
         :type id_student: int
-        :param old_data:
-        :type old_data: dict
-        :param credentials:
-        :type credentials: dict
+        :type options: NuvolaOptions
         """
         self.id_student = id_student
+        self.options = options
         t1 = datetime.datetime.now()
-        if "credentials" in kwargs and type(kwargs["credentials"]) is dict:
-            self.conn = self.Connection(kwargs["credentials"])
-        else:
-            self.conn = self.Connection()
-        print("[ OK ] Connection ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
-        if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-            self.__init_from_dict(kwargs["old_data"])
+        self.conn = self.Connection(self, self.options)
+        self.print("[ OK ] Connection ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        if type(old_data) is dict:
+            self.__init_from_dict(old_data)
             return
         t1 = datetime.datetime.now()
-        self.homeworks = self.Homeworks(self)
-        print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        self.homeworks = self.Homeworks(self, self.options)
+        self.print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
-        self.events = self.Events(self)
-        print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        self.events = self.Events(self, self.options)
+        self.print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
-        self.topics = self.Topics(self)
-        print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        self.topics = self.Topics(self, self.options)
+        self.print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         t1 = datetime.datetime.now()
         self.time_windows = self.__load_time_windows()
-        print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+        self.print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
         self.active_time_window = self.__select_best_time_window()
 
+    def print(self, data):
+        """
+        Prints data only when verbose is active
+
+        :param data: Data to be print
+        """
+        if self.options.get("verbose"):
+            print(data)
+
     def __init_from_dict(self, obj):
+        """
+        :param obj: dict
+        """
+
         class FormatErrorException(Exception):
             pass
 
@@ -52,52 +124,86 @@ class Nuvola:
             raise FormatErrorException(obj)
         if obj["version"] == VERSION or input("Data from import obj is from another version, continue? (y,N) ") == "y":
             t1 = datetime.datetime.now()
-            self.homeworks = self.Homeworks(self, old_data=obj["homeworks"])
-            print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            self.homeworks = self.Homeworks(self, self.options, obj["homeworks"])
+            self.print("[ OK ] Homeworks ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
             t1 = datetime.datetime.now()
-            self.events = self.Events(self, old_data=obj["events"])
-            print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            self.events = self.Events(self, self.options, obj["events"])
+            self.print("[ OK ] Events ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
             t1 = datetime.datetime.now()
-            self.topics = self.Topics(self, old_data=obj["topics"])
-            print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            self.topics = self.Topics(self, self.options, obj["topics"])
+            self.print("[ OK ] Topics ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
             t1 = datetime.datetime.now()
             self.time_windows = self.__load_time_windows(obj["timeWindows"])
-            print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
+            self.print("[ OK ] TimeWindows ({} seconds)".format((datetime.datetime.now() - t1).total_seconds()))
             self.active_time_window = self.__select_best_time_window()
         else:
             raise VersionMismatchException(f"{VERSION} != {obj['version']}")
 
-    def get(self, area):
-        url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, area)
+    def get(self, call):
+        """
+        Formats api request and sends it to /api-studente/v1/alunno/[call]
+
+        :param call: API call
+        :type call: str
+        :return: dict
+        """
+        url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, call)
         d = self.conn.get_data(url)
         return d["valori"]
 
     def get_custom(self, custom_url):
+        """
+        Send raw call to connection.get_data without formatting to nuvola.madisoft.it/[custom_url].
+
+        :param custom_url: URL
+        :type custom_url: str
+        :return: dict
+        """
         d = self.conn.get_data(custom_url)
         return d
 
     def __load_time_windows(self, old_data=None):
-        if old_data is not None:
-            return [self.TimeWindow(self, i["raw"], old_data=i) for i in old_data]
-        return [self.TimeWindow(self, i) for i in self.get("frazioni-temporali")]
+        """
+        :param old_data:
+        :type old_data: dict
+        :rtype: list
+        """
+        if type(old_data) is list:
+            return [self.TimeWindow(self, i["raw"], self.options, i) for i in old_data]
+        return [self.TimeWindow(self, i, self.options) for i in self.get("frazioni-temporali")]
 
     def __load_irregularities(self):
+        """
+        :rtype: list
+        """
         return [self.Irregularity(i, self) for i in self.get("assenze")]
 
     def get_time_windows(self):
+        """
+        Get all available time windows
+        """
         for i in self.time_windows:
             yield i
+
+    def check_and_update_all(self, force=False):
+        h = [self.homeworks, self.events, self.topics, self.events]
+        for i in self.time_windows:
+            h.append(i)
+        for i in h:
+            i.check_and_update(force)
 
     class Connection:
         class RequestErrorException(Exception):
             pass
 
-        def __init__(self, credentials=None):
+        def __init__(self, parent, options):
+            """
+            :param parent: Parent nuvola object
+            :type parent: Nuvola
+            """
+            self.parent = parent
+            self.options = options
             self.c = HTTPSConnection("nuvola.madisoft.it")
-            if credentials is not None:
-                self.credentials = credentials
-            else:
-                self.credentials = None
             try:
                 with open("u.tok", "r") as f:
                     self.u_token = f.read()
@@ -114,11 +220,11 @@ class Nuvola:
             try:
                 self.u_token = scrape_from_token(self.s_token)
             except ExpiredSessionTokenException:
-                if self.credentials is not None:
+                if self.options.get("credentials") is not None:
                     self.s_token, self.u_token = scrape_from_credentials(
-                        self.credentials["username"], self.credentials["password"])
+                        self.options.get("credentials")["username"], self.options.get("credentials")["password"])
                 else:
-                    print("Expired session token, please use credentials")
+                    self.parent.print("Expired session token, please use credentials")
                     self.s_token, self.u_token = scrape_from_credentials(
                         input("Username: "), getpass("Password: "))
             with open("s.tok", "w") as f:
@@ -133,7 +239,7 @@ class Nuvola:
             if j == "Errore":
                 raise self.RequestErrorException(j)
             if "code" in j and j["code"] == 401:
-                print("Token expired, getting a new one...")
+                self.parent.print("Token expired, getting a new one...")
                 self.refresh_tokens()
                 return self.get_data(url)
             else:
@@ -144,12 +250,6 @@ class Nuvola:
             raise TypeError(file)
         return "curl \"https://nuvola.madisoft.it/{}\" -H \"Authorization: {}\"".format(
             file.parent_class.ATTACHMENT_LINK.format(self.id_student, file.uuid), self.conn.u_token)
-
-    class IncompatibleTimeWindowException(Exception):
-        pass
-
-    class MissingSuitableTimeWindowException(Exception):
-        pass
 
     def __select_best_time_window(self):
         # Try to get entire year, else try to get current window
@@ -168,15 +268,20 @@ class Nuvola:
             raise self.IncompatibleTimeWindowException(tw)
 
     class Homeworks:
-        def __init__(self, parent, max_empty_days=15*4, **kwargs):
+        def __init__(self, parent, options, old_data=None):
+            """
+            :param parent: Parent nuvola object
+            :param options: Options object
+            :type parent: Nuvola
+            :type options: NuvolaOptions
+            """
             self.parent = parent
-            self.max_empty_days = max_empty_days
-            self.refresh_time = datetime.timedelta(hours=6)
+            self.options = options
             self.data = []
-            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-                self.__init_from_dict(kwargs["old_data"])
+            if type(old_data) is dict:
+                self.__init_from_dict(old_data)
                 return
-            self.mod_time = datetime.datetime.now()
+            self.mod_time = datetime.datetime.fromtimestamp(0)
             self.load()
 
         def __init_from_dict(self, obj):
@@ -185,10 +290,17 @@ class Nuvola:
             self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
 
         def load(self):
-            date_s = datetime.date(year=2020, month=8, day=30) + datetime.timedelta(days=1)
-            date_e = date_s + datetime.timedelta(days=15)
             empty_count = 0
-            self.data = []
+            if self.data:
+                expired = list(self.get_by_expiration_date(
+                    datetime.date.today() - self.options.get("homeworks")["backwards_refresh_date"], 0, True))
+                for i in range(len(expired)):
+                    self.data.remove(expired[i])
+                date_s = datetime.date.today() + datetime.timedelta(days=1)
+            else:
+                date_s = self.options.get("start_date") + datetime.timedelta(days=1)
+
+            date_e = date_s + datetime.timedelta(days=15)
             while True:
                 # for each iteration we ask nuvola homeworks in a period of time of 15 days
                 c = self.parent.get("compito/elenco/{}/{}".format(
@@ -198,17 +310,23 @@ class Nuvola:
                 else:
                     self.data += [Nuvola.Homework(i) for i in c]
                     empty_count = 0
-                if empty_count >= self.max_empty_days / 15:
+                if empty_count >= self.options.get("homeworks")["max_empty_days"] / 15:
                     break
                 date_s = date_e + datetime.timedelta(days=1)
                 date_e += datetime.timedelta(days=15)
             self.mod_time = datetime.datetime.now()
 
         def check_and_update(self, force=False):
-            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+            if force or datetime.datetime.now() > self.mod_time + self.options.get("refresh_interval"):
+                self.parent.print("Updating Homeworks...")
                 self.load()
 
         def get_by_assignment_date(self, date, days=0):
+            """
+            :param date:
+            :param days:
+            :rtype: Nuvola.Homework
+            """
             self.check_and_update()
             if type(date) is not datetime.date:
                 raise TypeError(date)
@@ -216,8 +334,9 @@ class Nuvola:
                 if date + datetime.timedelta(days=days) >= i.date_assigned >= date and i.date_assigned:
                     yield i
 
-        def get_by_expiration_date(self, date, days=0):
-            self.check_and_update()
+        def get_by_expiration_date(self, date, days=0, skip_check=False):
+            if not skip_check:
+                self.check_and_update()
             if type(date) is not datetime.date:
                 raise TypeError(date)
             for i in self.data:
@@ -228,11 +347,6 @@ class Nuvola:
             self.check_and_update()
             for i in self.data:
                 yield i
-
-        def set_refresh_time(self, time: datetime.timedelta):
-            if type(time) is not datetime.timedelta:
-                raise TypeError(time)
-            self.refresh_time = time
 
     class Homework:
         ATTACHMENT_LINK = "/api-studente/v1/alunno/{}/compito/allegato/{}"
@@ -249,14 +363,14 @@ class Nuvola:
             self.raw = h
 
     class Events:
-        def __init__(self, parent, **kwargs):
+        def __init__(self, parent, options, old_data=None):
             self.parent = parent
-            self.refresh_time = datetime.timedelta(hours=6)
+            self.options = options
             self.data = []
-            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-                self.__init_from_dict(kwargs["old_data"])
+            if type(old_data) is dict:
+                self.__init_from_dict(old_data)
                 return
-            self.mod_time = datetime.datetime.now()
+            self.mod_time = datetime.datetime.fromtimestamp(0)
             self.load()
 
         def __init_from_dict(self, obj):
@@ -272,13 +386,9 @@ class Nuvola:
             self.mod_time = datetime.datetime.now()
 
         def check_and_update(self, force=False):
-            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+            if force or datetime.datetime.now() > self.mod_time + self.options.get("refresh_interval"):
+                self.parent.print("Updating Events...")
                 self.load()
-
-        def set_refresh_time(self, time):
-            if type(time) is not datetime.timedelta:
-                raise TypeError(time)
-            self.refresh_time = time
 
         def get_all(self):
             self.check_and_update()
@@ -286,7 +396,7 @@ class Nuvola:
                 yield i
 
         def get_by_date(self, date):
-            if type(date) is not date:
+            if type(date) is not datetime.date:
                 raise TypeError(date)
             self.check_and_update()
             for i in self.data:
@@ -335,44 +445,41 @@ class Nuvola:
             self.border_color = e["coloreBordo"]
             self.id_notification = e["idNotifica"]
             self.date_start = datetime.datetime.fromisoformat(
-                e["dataInizio"].replace("00:00:00", e["oraInizio"]+":00"))
+                e["dataInizio"].replace("00:00:00", e["oraInizio"] + ":00"))
             self.date_end = datetime.datetime.fromisoformat(
                 e["dataFine"].replace("00:00:00", e["oraFine"] + ":00"))
             self.raw = e
 
     class TimeWindow:
-        def __init__(self, parent, w, **kwargs):
+        def __init__(self, parent, w, options, old_data=None):
             self.parent = parent
             self.id_ = w["id"]
             self.name = w["nome"]
             self.current = w["corrente"]
             self.raw = w
-            self.refresh_time = datetime.timedelta(hours=6)
-            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-                self.__init_from_dict(kwargs["old_data"])
+            self.options = options
+            if type(old_data) is dict:
+                self.__init_from_dict(old_data)
                 return
-            self.mod_time = datetime.datetime.now()
+            self.mod_time = datetime.datetime.fromtimestamp(0)
             self.subjects = []
             self.load()
 
         def __init_from_dict(self, obj):
-            self.subjects = [self.Subject(self, i["raw"], old_data=i["marks"]) for i in obj["subjects"]]
+            self.subjects = [self.Subject(self, i["raw"], i["marks"]) for i in obj["subjects"]]
             self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
 
         def load(self):
+            self.subjects = []
             s = self.parent.get("frazione-temporale/{}/voti/materie".format(self.id_))
             for i in s:
                 self.subjects.append(self.Subject(self, i))
             self.mod_time = datetime.datetime.now()
 
         def check_and_update(self, force=False):
-            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+            if force or datetime.datetime.now() > self.mod_time + self.options.get("refresh_interval"):
+                self.parent.print("Updating TimeWindow...")
                 self.load()
-
-        def set_refresh_time(self, time: datetime.timedelta):
-            if type(time) is not datetime.timedelta:
-                raise TypeError(time)
-            self.refresh_time = time
 
         def get_subject_by_name(self, name):
             self.check_and_update()
@@ -392,26 +499,27 @@ class Nuvola:
                     return id_
 
         class Subject:
-            def __init__(self, parent, s, **kwargs):
+            def __init__(self, parent, s, old_data=None):
                 self.parent = parent
                 self.id_ = s["id"]
                 self.name = s["materia"]
                 self.type = s["tipo"]
                 self.raw = s
-                if "old_data" in kwargs and type(kwargs["old_data"]) is list:
-                    self.__init_from_dict(kwargs["old_data"])
+                if type(old_data) is list:
+                    self.__init_from_dict(old_data)
                     return
                 self.marks = []
                 self.load()
 
             def __init_from_dict(self, obj):
-                self.marks = [self.Mark(i) for i in obj]
+                self.marks = [self.Mark(i, self) for i in obj]
 
             def load(self):
+                self.marks = []
                 m = self.parent.parent.get(
                     "frazione-temporale/{}/voti/materia/{}".format(self.parent.id_, self.id_))
                 for i in m[0]["voti"]:
-                    self.marks.append(self.Mark(i))
+                    self.marks.append(self.Mark(i, self))
 
             def get_all(self):
                 self.parent.check_and_update()
@@ -451,7 +559,10 @@ class Nuvola:
                         yield i
 
             class Mark:
-                def __init__(self, m):
+                def __init__(self, m, parent):
+                    self.parent = parent
+                    self.subject = self.parent.name
+                    self.subject_id = self.parent.id_
                     self.date = datetime.datetime.fromisoformat(m["data"]).date()
                     self.teacher = m["docente"]
                     self.type_ = m["tipologia"]
@@ -498,15 +609,14 @@ class Nuvola:
             return self.parent.get_custom("/api-studente/v1/assenza/" + str(self.id))["dettaglio"]
 
     class Topics:
-        def __init__(self, parent, max_empty_days=15 * 4, **kwargs):
+        def __init__(self, parent, options, old_data=None):
             self.parent = parent
-            self.max_empty_days = max_empty_days
-            self.refresh_time = datetime.timedelta(hours=6)
+            self.options = options
             self.data = []
-            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-                self.__init_from_dict(kwargs["old_data"])
+            if type(old_data) is dict:
+                self.__init_from_dict(old_data)
                 return
-            self.mod_time = datetime.datetime.now()
+            self.mod_time = datetime.datetime.fromtimestamp(0)
             self.load()
 
         def __init_from_dict(self, obj):
@@ -515,10 +625,17 @@ class Nuvola:
             self.mod_time = datetime.datetime.fromtimestamp(obj["mod_time"])
 
         def load(self):
-            date_s = datetime.date(year=2020, month=8, day=30) + datetime.timedelta(days=1)
+            if self.data:
+                expired = list(self.get_by_date(
+                    datetime.date.today() - self.options.get("topics")["backwards_refresh_date"], True))
+                for i in range(len(expired)):
+                    self.data.remove(expired[i])
+                date_s = datetime.date.today() + datetime.timedelta(days=1)
+            else:
+                date_s = self.options.get("start_date") + datetime.timedelta(days=1)
             date_e = date_s + datetime.timedelta(days=15)
             empty_count = 0
-            self.data = []
+
             while True:
                 # for each iteration we ask nuvola homeworks in a period of time of 15 days
                 c = self.parent.get("argomento-lezione/elenco/{}/{}".format(
@@ -535,30 +652,27 @@ class Nuvola:
                                     self.data.append(Nuvola.Topic(j, j["argomenti"][k], i["classe"], i["classeId"]))
                 if emp:
                     empty_count += 1
-                if empty_count >= self.max_empty_days / 15:
+                if empty_count >= self.options.get("topics")["max_empty_days"] / 15:
                     break
                 date_s = date_e + datetime.timedelta(days=1)
                 date_e += datetime.timedelta(days=15)
             self.mod_time = datetime.datetime.now()
 
         def check_and_update(self, force=False):
-            if force or datetime.datetime.now() > self.mod_time + self.refresh_time:
+            if force or datetime.datetime.now() > self.mod_time + self.options.get("refresh_interval"):
+                self.parent.print("Updating Topics...")
                 self.load()
-
-        def set_refresh_time(self, time):
-            if type(time) is not datetime.timedelta:
-                raise TypeError(time)
-            self.refresh_time = time
 
         def get_all(self):
             self.check_and_update()
             for i in self.data:
                 yield i
 
-        def get_by_date(self, date):
-            if type(date) is not date:
+        def get_by_date(self, date, skip_check):
+            if type(date) is not datetime.date:
                 raise TypeError(date)
-            self.check_and_update()
+            if not skip_check:
+                self.check_and_update()
             for i in self.data:
                 if i.date == date:
                     yield i
@@ -616,9 +730,9 @@ class Nuvola:
             self.raw = t_r
 
     class File:
-        def __init__(self, f, parent, **kwargs):
-            if "old_data" in kwargs and type(kwargs["old_data"]) is dict:
-                self.__init_from_dict(kwargs["old_data"])
+        def __init__(self, f, parent, old_data=None):
+            if type(old_data) is dict:
+                self.__init_from_dict(old_data)
                 return
             self.parent = parent
             self.id_ = f["id"]
@@ -629,7 +743,7 @@ class Nuvola:
             for i in obj:
                 self.__setattr__(i, obj[i])
 
-    def dump_to_dict(self, update_first=True):
+    def dump_to_dict(self, update_first=False):
         self.homeworks.check_and_update(update_first)
         self.events.check_and_update(update_first)
         for i in self.get_time_windows():
@@ -686,3 +800,9 @@ class Nuvola:
                 "class_id": t.class_id
             })
         return output
+
+    class IncompatibleTimeWindowException(Exception):
+        pass
+
+    class MissingSuitableTimeWindowException(Exception):
+        pass

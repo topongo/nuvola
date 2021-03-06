@@ -1,2 +1,2 @@
-from .nuvola import Nuvola
+from .nuvola import Nuvola, NuvolaOptions
 from .scraper import InvalidCredentialsException, ExpiredSessionTokenException

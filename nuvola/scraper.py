@@ -1,6 +1,7 @@
 import seleniumwire.webdriver
 import requests
 from json.decoder import JSONDecodeError
+from simplejson.decoder import JSONDecodeError as JSONDecodeError_
 
 opt = seleniumwire.webdriver.ChromeOptions()
 opt.headless = True
@@ -22,7 +23,7 @@ def scrape_from_token(session_token):
     try:
         return requests.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
                    cookies={"nuvola": str(session_token)}).json()["token"]
-    except JSONDecodeError:
+    except (JSONDecodeError, JSONDecodeError_):
         raise ExpiredSessionTokenException
 
 
