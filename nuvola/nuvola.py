@@ -11,8 +11,6 @@ class NuvolaOptions:
     DATA_TYPES = {
         "credentials": dict,
         "verbose": bool,
-        "old_data": dict,
-        "connection": None,
         "refresh_interval": datetime.timedelta,
         "start_date": datetime.date,
         "homeworks": {
@@ -37,7 +35,6 @@ class NuvolaOptions:
         else:
             self.data = {
                 "credentials": None,
-                "old_data": {},
                 "verbose": False,
                 "refresh_interval": datetime.timedelta(hours=6),
                 "start_date": datetime.date(year=2020, month=8, day=30),
@@ -218,7 +215,7 @@ class Nuvola:
 
         def refresh_tokens(self):
             try:
-                self.u_token = scrape_from_token(self.s_token)
+                self.u_token = scrape_from_token(self.s_token, self.options.get("verbose"))
             except ExpiredSessionTokenException:
                 if self.options.get("credentials") is not None:
                     self.s_token, self.u_token = scrape_from_credentials(
@@ -226,7 +223,7 @@ class Nuvola:
                 else:
                     self.parent.print("Expired session token, please use credentials")
                     self.s_token, self.u_token = scrape_from_credentials(
-                        input("Username: "), getpass("Password: "))
+                        input("Username: "), getpass("Password: "), self.options.get("verbose"))
             with open("s.tok", "w") as f:
                 f.write(self.s_token)
             with open("u.tok", "w") as f:
