@@ -5,6 +5,14 @@ from simplejson.decoder import JSONDecodeError as JSONDecodeError_
 
 opt = seleniumwire.webdriver.ChromeOptions()
 opt.headless = True
+opt.add_argument("start-maximized")
+opt.add_argument("enable-automation")
+opt.add_argument("--headless")
+opt.add_argument("--no-sandbox")
+opt.add_argument("--disable-infobars")
+opt.add_argument("--disable-dev-shm-usage")
+opt.add_argument("--disable-browser-side-navigation")
+opt.add_argument("--disable-gpu")
 
 
 class InvalidCredentialsException(Exception):
@@ -22,7 +30,7 @@ class GenericErrorException(Exception):
 def scrape_from_token(session_token, verb=False):
     try:
         if verb:
-            print(":: Scraper :: Trying to get auth_token...")
+            print("\n:: Scraper :: Trying to get auth_token...")
         return requests.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
                    cookies={"nuvola": str(session_token)}).json()["token"]
     except (JSONDecodeError, JSONDecodeError_):
@@ -33,7 +41,7 @@ def scrape_from_token(session_token, verb=False):
 
 def scrape_from_credentials(user, pwd, verb=False):
     if verb:
-        print(":: Scraper :: Starting driver...")
+        print("\n:: Scraper :: Starting driver...")
     d = seleniumwire.webdriver.Chrome(chrome_options=opt)
     if verb:
         print(":: Scraper :: Getting login page...")
@@ -46,6 +54,7 @@ def scrape_from_credentials(user, pwd, verb=False):
     if "https://nuvola.madisoft.it/area-studente" not in [i.url for i in d.requests]:
         if verb:
             print(":: Scraper :: Login failed.")
+        d.close()
         raise InvalidCredentialsException
 
     if verb:
