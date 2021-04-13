@@ -18,6 +18,7 @@ class NuvolaOptions:
         "force_import": bool,
         "use_token_files": bool,
         "token_files_path": str,
+        "student_id": int,
         "homeworks": {
             "max_empty_days": int,
             "backwards_refresh_date": datetime.timedelta
@@ -46,6 +47,7 @@ class NuvolaOptions:
                 "start_date": datetime.date(year=2020, month=9, day=1),
                 "use_token_files": True,
                 "token_files_path": "",
+                "student_id": None,
                 "homeworks": {
                     "max_empty_days": 15 * 4,
                     "backwards_refresh_date": datetime.timedelta(hours=24)
@@ -72,9 +74,11 @@ class NuvolaOptions:
                 if type(value[i]) is self.DATA_TYPES[key][i]:
                     self.data[key] = value
                 else:
-                    raise TypeError(f"Invalid type: \"{self.DATA_TYPES[key][i]}\" required, \"{type(value[i])}\" provided")
+                    raise TypeError(f"Invalid type: \"{type(value[i]).__name__}\" provided, "
+                                    f"\"{self.DATA_TYPES[key][i].__name__}\" required")
         else:
-            raise TypeError(f"Invalid type: \"{self.DATA_TYPES[key]}\" required, \"{type(value)}\" provided")
+            raise TypeError(f"Invalid type: \"{type(value).__name__}\" provided, "
+                            f"\"{self.DATA_TYPES[key].__name__}\" required")
 
     def get(self, key):
         try:
@@ -90,12 +94,12 @@ class NuvolaOptions:
 
 
 class Nuvola:
-    def __init__(self, id_student, options=NuvolaOptions(), old_data=None):
+    def __init__(self, options=NuvolaOptions(), old_data=None):
         """
-        :param id_student: Student id, for now it can only be retrieved with a browser, sadly.
         :param options: User defined options
-        :type id_student: int
+        :param old_data: Data previously exported
         :type options: NuvolaOptions
+        :type old_data: dict
         """
 
         def __init(self_, obj=None):
@@ -123,15 +127,15 @@ class Nuvola:
             self_.time_windows = self_.__load_time_windows(obj["timeWindows"])
             self_.print(" OK ({} seconds)".format((datetime.datetime.now() - timer_).total_seconds()))
             self_.active_time_window = self_.__select_best_time_window()
+            self_.id_student = self.__get_student_id()
 
-        self.id_student = id_student
         self.options = options
         timer = datetime.datetime.now()
         self.print(":: Init :: Connection...", end="")
         self.conn = self.Connection(self, self.options)
         self.print(" OK ({} seconds)".format((datetime.datetime.now() - timer).total_seconds()))
-        self.homeworks, self.events, self.topics, self.time_windows, self.active_time_window = (
-            None, None, None, None, None)
+        self.homeworks, self.events, self.topics, self.time_windows, self.active_time_window, self.id_student = (
+            None, None, None, None, None, None)
 
         if type(old_data) is dict:
             if all([i in ("homeworks", "events", "timeWindows", "version", "topics") for i in old_data.keys()]):
@@ -192,6 +196,24 @@ class Nuvola:
         """
         return [self.Irregularity(i, self) for i in self.get("assenze")]
 
+    def __get_student_id(self):
+        d = self.get_custom("/api-studente/v1/alunni")["valori"]
+        if len(d) > 1:
+            if self.options.get("student_id") is None:
+                raise self.AmbiguousIDException(f"There are more than one student associated with this account, please "
+                                                f"specify a student_id with a NuvolaOptions using the "
+                                                f"\"student_id\" key.\n"
+                                                f"List of associated accounts:\n"
+                                                "{}".format('\n'.join(["{} {}: {}".format(
+                    i["cognome"].capitalize(), i["nome"].capitalize(), i["id"]) for i in d]))
+                )
+            else:
+                d = [i for i in d if i["id"] == self.options.get("student_id")]
+                if len(d) == 0:
+                    raise self.InvalidIDException(f"The provided id (\"{self.options.get('student_id')}\") "
+                                                  f"is not associated with the current user")
+        return d[0]["id"]
+
     def get_time_windows(self):
         """
         Get all available time windows
@@ -208,6 +230,9 @@ class Nuvola:
 
     class Connection:
         class RequestErrorException(Exception):
+            pass
+
+        class InvalidResponseException(Exception):
             pass
 
         def __init__(self, parent, options):
@@ -257,7 +282,11 @@ class Nuvola:
         def get_data(self, url):
             self.c.request("GET", url, headers={"Authorization": "Bearer " + self.u_token})
             j_r = self.c.getresponse()
-            j = json.load(j_r)
+            j_s = j_r.read().decode()
+            try:
+                j = json.loads(j_s)
+            except json.decoder.JSONDecodeError:
+                raise self.InvalidResponseException()
             if j == "Errore":
                 raise self.RequestErrorException(j)
             if "code" in j and j["code"] == 401:
@@ -371,7 +400,6 @@ class Nuvola:
             for i in self.data:
                 if date + interval >= i.date_assigned >= date:
                     yield i
-
 
         def get_by_expiration_date(self, date, interval=datetime.timedelta(days=0), skip_check=False):
             if not skip_check:
@@ -861,4 +889,10 @@ class Nuvola:
         pass
 
     class MissingSuitableTimeWindowException(Exception):
+        pass
+
+    class InvalidIDException(Exception):
+        pass
+
+    class AmbiguousIDException(Exception):
         pass
