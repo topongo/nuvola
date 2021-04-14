@@ -24,5 +24,6 @@ setuptools.setup(
         "selenium-wire",
         "requests",
         "datetime",
+        "simplejson"
     ]
 )
