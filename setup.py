@@ -1,11 +1,11 @@
 import setuptools
 
-VERSION = "1.3"
+VERSION = "1.4"
 
 with open("README.md") as f:
     LONGDESCRIPTION = f.read()
 with open("nuvola/version.py", "w+") as f:
-    f.write(f"VERSION = {VERSION}")
+    f.write(f"VERSION = {VERSION}\n")
 
 setuptools.setup(
     name='nuvola',
@@ -21,7 +21,7 @@ setuptools.setup(
     long_description=LONGDESCRIPTION,
     long_description_content_type="text/markdown",
     install_requires=[
-        "selenium-wire",
+        "bs4",
         "requests",
         "datetime",
         "simplejson"

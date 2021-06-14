@@ -1,9 +1,8 @@
 import datetime
 import json
+import requests
 from copy import deepcopy
 from getpass import getpass
-from http.client import HTTPSConnection
-from .scraper import scrape_from_credentials, scrape_from_token, ExpiredSessionTokenException
 from .version import VERSION
 from os import access as os_access, W_OK
 from os.path import isdir
@@ -110,6 +109,10 @@ class Nuvola:
                     "topics": None,
                     "timeWindows": None
                 }
+
+            if options.get("student_id") is None:
+                self_.print(":: Init :: Retriving Student Id")
+                self_.id_student = self.__get_student_id()
             self_.print(":: Init :: Homeworks...", end="")
             timer_ = datetime.datetime.now()
             self_.homeworks = self_.Homeworks(self_, self_.options, obj["homeworks"])
@@ -127,7 +130,6 @@ class Nuvola:
             self_.time_windows = self_.__load_time_windows(obj["timeWindows"])
             self_.print(" OK ({} seconds)".format((datetime.datetime.now() - timer_).total_seconds()))
             self_.active_time_window = self_.__select_best_time_window()
-            self_.id_student = self.__get_student_id()
 
         self.options = options
         timer = datetime.datetime.now()
@@ -165,7 +167,7 @@ class Nuvola:
         :type call: str
         :return: dict
         """
-        url = "/api-studente/v1/alunno/{}/{}".format(self.id_student, call)
+        url = "https://nuvola.madisoft.it/api-studente/v1/alunno/{}/{}".format(self.id_student, call)
         d = self.conn.get_data(url)
         return d["valori"]
 
@@ -177,7 +179,7 @@ class Nuvola:
         :type custom_url: str
         :return: dict
         """
-        d = self.conn.get_data(custom_url)
+        d = self.conn.get_data(f"https://nuvola.madisoft.it/{custom_url}")
         return d
 
     def __load_time_windows(self, old_data=None):
@@ -242,7 +244,6 @@ class Nuvola:
             """
             self.parent = parent
             self.options = options
-            self.c = HTTPSConnection("nuvola.madisoft.it")
             self.s_token = None
             self.s_token = None
             if self.options.get("use_token_files"):
@@ -262,17 +263,72 @@ class Nuvola:
                 self.refresh_tokens()
 
         def refresh_tokens(self):
+            from simplejson.errors import JSONDecodeError
+
+            class InvalidCredentialsException(Exception):
+                pass
+
+            class ExpiredSessionTokenException(Exception):
+                pass
+
+            class GenericErrorException(Exception):
+                pass
+
+            def scrape_from_credentials(user, pwd):
+                from bs4 import BeautifulSoup as Bs
+
+                s = requests.Session()
+
+                self.parent.print(":: Scraper :: Getting login page...")
+                login_page = s.get("https://nuvola.madisoft.it")
+                csrf_token = Bs(login_page.text, features="lxml").find_all("input")[0].attrs["value"]
+
+                self.parent.print(":: Scraper :: Logging in...")
+                login_response = s.post("https://nuvola.madisoft.it/login_check",
+                                        data={"_username": user, "_password": pwd,
+                                              "_csrf_token": csrf_token})
+
+                if "Nuvola - Area" not in login_response.text:
+                    self.parent.print(":: Scraper :: Login failed.")
+                    raise InvalidCredentialsException
+
+                session_token = s.cookies["nuvola"]
+                self.parent.print(":: Scraper :: Authentication successful.")
+                try:
+                    self.parent.print(":: Scraper :: Trying to get auth_token...")
+                    r = s.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
+                              cookies={"nuvola": str(session_token)})
+
+                    self.parent.print(":: Scraper :: Too early, retrying...")
+                    r = s.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
+                              cookies={"nuvola": str(session_token)})
+                    return session_token, r.json()["token"]
+                except JSONDecodeError:
+                    self.parent.print(":: Scraper :: Something has gone wrong.")
+                    raise GenericErrorException
+
+            def scrape_from_token(session_token, verb=False):
+                try:
+                    if verb:
+                        print("\n:: Scraper :: Trying to get auth_token...")
+                    r = requests.get("https://nuvola.madisoft.it/api-studente/v1/login-from-web",
+                                     cookies={"nuvola": str(session_token)})
+                    return r.json()["token"]
+                except JSONDecodeError:
+                    if verb:
+                        print(":: Scraper :: Failed to get auth_token: session_token is not invalid.")
+                    raise ExpiredSessionTokenException
+
             try:
                 self.u_token = scrape_from_token(self.s_token, self.options.get("verbose"))
             except ExpiredSessionTokenException:
                 if self.options.get("credentials") is not None:
                     self.s_token, self.u_token = scrape_from_credentials(
-                        self.options.get("credentials")["username"], self.options.get("credentials")["password"],
-                        self.options.get("verbose"))
+                        self.options.get("credentials")["username"], self.options.get("credentials")["password"])
                 else:
                     self.parent.print(":: Connection :: Expired session token, please use credentials")
                     self.s_token, self.u_token = scrape_from_credentials(
-                        input("Username: "), getpass("Password: "), self.options.get("verbose"))
+                        input("Username: "), getpass("Password: "))
             if self.options.get("use_token_files"):
                 with open(f"{self.options.get('token_files_path')}s.tok", "w") as fs, \
                         open(f"{self.options.get('token_files_path')}u.tok", "w") as fu:
@@ -280,9 +336,7 @@ class Nuvola:
                     fu.write(self.u_token)
 
         def get_data(self, url):
-            self.c.request("GET", url, headers={"Authorization": "Bearer " + self.u_token})
-            j_r = self.c.getresponse()
-            j_s = j_r.read().decode()
+            j_s = requests.get(url, headers={"Authorization": "Bearer " + self.u_token}).text
             try:
                 j = json.loads(j_s)
             except json.decoder.JSONDecodeError:
@@ -305,11 +359,10 @@ class Nuvola:
             """
             if type(file) is not Nuvola.File:
                 raise TypeError(file)
-            self.c.request("GET",
-                           f"https://nuvola.madisoft.it/"
-                           f"{file.parent.ATTACHMENT_LINK.format(self.parent.id_student, file.id_)}",
-                           headers={"Authorization": "Bearer " + self.u_token})
-            return self.c.getresponse()
+
+            return requests.get(f"https://nuvola.madisoft.it/"
+                                f"{file.parent.ATTACHMENT_LINK.format(self.parent.id_student, file.id_)}",
+                                headers={"Authorization": "Bearer " + self.u_token}).content
 
     def __select_best_time_window(self):
         # Try to get entire year, else try to get current window
